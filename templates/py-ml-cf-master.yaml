@@ -1,0 +1,95 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Stack to create a Python ML environment
+
+Metadata:
+
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: AWS Parameters 
+      Parameters:
+        - KeyName
+        - IAMRole
+        - SshAccessCidr 
+
+Parameters:
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an EC23 KeyPair.
+  
+  HostInstanceType:
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+      - t2.large
+      - m4.large
+      - m4.xlarge
+      - m4.2xlarge
+      - m4.4xlarge
+      - m4.10xlarge
+      - m3.medium
+      - m3.large
+      - m3.xlarge
+      - m3.2xlarge
+      - r3.large
+      - r3.xlarge
+      - r3.2xlarge
+      - r3.4xlarge
+      - r3.8xlarge
+    ConstraintDescription: Must be a valid Amazon EC2 instance type.
+    Default: t2.large
+    Description: The Amazon EC2 instance type for your web instances.
+    Type: String
+
+  IAMRole:
+    AllowedPattern: ^([a-zA-Z0-9])([a-zA-Z0-9 _-]*)([a-zA-Z0-9])$
+    Description: The IAM role to attach to the EC2 Host instance 
+    Type: String
+    Default: << Custom IAM Role >>
+
+  SshAccessCidr:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    Description: The CIDR IP range that is permitted to SSH to bastion instance. Note - a value of 0.0.0.0/0 will allow access from ANY IP address.
+    Type: String
+    Default: 0.0.0.0/0
+  
+Resources:
+
+  newvpc:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/<< bucket-name >>/py-ml-cf/templates/py-ml-cf-vpc.yaml
+  
+  securitygroups:
+    DependsOn: newvpc
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        SshAccessCidr: !Ref SshAccessCidr
+        Vpc: !GetAtt [ newvpc, Outputs.Vpc ]
+      TemplateURL: https://s3.amazonaws.com/<< bucket-name >>/py-ml-cf/templates/py-ml-cf-securitygroups.yaml
+  
+  host:
+    DependsOn: [ newvpc, securitygroups ]
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        KeyName:
+          !Ref KeyName
+        HostInstanceType:
+          !Ref HostInstanceType
+        HostSecurityGroup:
+          !GetAtt [ securitygroups, Outputs.DmzSSHSecurityGroup ]
+        DmzSubnet0:
+          !GetAtt [ newvpc, Outputs.DmzSubnet0 ]
+      TemplateURL: https://s3.amazonaws.com/<< bucket-name >>/py-ml-cf/templates/py-ml-cf-host.yaml
+  
+Outputs:
+
+  HostPubIP:
+    Description: ML Python Environment Host instance public IP address.
+    Value: !GetAtt [ host, Outputs.publicIP ]

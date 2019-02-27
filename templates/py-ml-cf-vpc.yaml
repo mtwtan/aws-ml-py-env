@@ -1,0 +1,135 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Creating Python ML environment VPC network
+
+Mappings:
+
+  SubnetConfig:
+    Vpc:
+      CIDR: 10.0.0.0/16
+    MLdmz0:
+      CIDR: 10.0.0.0/27
+    MLprivate0:
+      CIDR: 10.0.1.0/24
+
+Resources:
+
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !FindInMap [ SubnetConfig, Vpc, CIDR ]
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Join [ '', [ 'Vpc / ', !Ref 'AWS::StackName' ] ]
+  
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Join [ '', [ 'InternetGateway / ', !Ref 'AWS::StackName' ] ]
+
+  AttachInternetGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref Vpc
+  
+  DmzSubnet0:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !FindInMap [ SubnetConfig, MLdmz0, CIDR ]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join [ '', [ 'MLdmz0 / ', !Ref 'AWS::StackName' ] ]
+        - Key: SubnetType
+          Value: Public
+      VpcId: !Ref Vpc
+
+  DmzRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachInternetGateway
+    Properties:
+      RouteTableId: !Ref DmzRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  
+  DmzRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Join [ '', [ 'DmzRouteTable / ', !Ref 'AWS::StackName' ] ]
+        - Key: Network
+          Value: Public
+      VpcId: !Ref Vpc
+  
+  DmzRouteTableAssociation0:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref DmzSubnet0
+      RouteTableId: !Ref DmzRouteTable
+  
+  NatEIP0:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc 
+  
+  NatGateway0:
+    Type: AWS::EC2::NatGateway
+    DependsOn: AttachInternetGateway
+    Properties:
+      AllocationId: !GetAtt NatEIP0.AllocationId
+      SubnetId: !Ref DmzSubnet0
+
+  NatRouteTable0:
+    Type: AWS::EC2::RouteTable
+    Properties: 
+      VpcId: !Ref Vpc 
+      Tags:
+        - Key: Name 
+          Value: !Join [ '', [ 'NatRouteTable0 / ', !Ref 'AWS::StackName' ] ]
+        - Key: Network
+          Value: Public
+
+  NatRoute0:
+    Type: AWS::EC2::Route 
+    Properties:
+      RouteTableId: !Ref NatRouteTable0
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway0
+  
+  MLprivateSubnet0:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs '' ]
+      CidrBlock: !FindInMap [ SubnetConfig, MLprivate0, CIDR ]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Join [ '', [ 'MLprivateSubnet0 / ', !Ref 'AWS::StackName' ] ]
+        - Key: SubnetType
+          Value: Private
+      VpcId: !Ref Vpc
+  
+  MLprivateSubnetRouteTableAssociation0:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref NatRouteTable0
+      SubnetId: !Ref MLprivateSubnet0
+
+Outputs:
+  
+  Vpc:
+    Value: !Ref Vpc
+  VpcCidr:
+    Value: !FindInMap [ SubnetConfig, Vpc, CIDR ]
+  DmzSubnet0:
+    Value: !Ref DmzSubnet0
+  DmzSubnet0Cidr:
+    Value: !FindInMap [ SubnetConfig, MLdmz0, CIDR ]

@@ -1,0 +1,162 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Creating Python ML environment using EC2 and Amazon Linux AMI
+
+Metadata:
+
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: ML Python Host Parameters
+      Parameters:
+        - KeyName
+        - IAMRole
+    ParameterLabels:
+      KeyName:
+        default: Existing Key Pair
+      IAMRole:
+        default: Existing IAM role to attach 
+
+Parameters:
+
+  KeyName:
+    AllowedPattern: ^([a-zA-Z0-9 @.`~!#$%^&*()_+,\\-])*$
+    ConstraintDescription: Must be letters (upper or lower), numbers, and special characters.
+    Description: Name of an EC2 KeyPair. Your bastion & Web instances will launch with this KeyPair.
+    Type: AWS::EC2::KeyPair::KeyName
+  
+  IAMRole:
+    AllowedPattern: ^([a-zA-Z0-9])([a-zA-Z0-9 _-]*)([a-zA-Z0-9])$
+    Description: The IAM role to attach to the EC2 Host instance 
+    Type: String
+    Default: customFullAccessS3
+
+  HostInstanceType:
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+      - t2.large
+      - m4.large
+      - m4.xlarge
+      - m4.2xlarge
+      - m4.4xlarge
+      - m4.10xlarge
+      - m3.medium
+      - m3.large
+      - m3.xlarge
+      - m3.2xlarge
+      - r3.large
+      - r3.xlarge
+      - r3.2xlarge
+      - r3.4xlarge
+      - r3.8xlarge
+    ConstraintDescription: Must be a valid Amazon EC2 instance type.
+    Default: t2.large
+    Description: The Amazon EC2 instance type for your web instances.
+    Type: String
+
+  HostSecurityGroup:
+    Description: Select the Host security group.
+    Type: AWS::EC2::SecurityGroup::Id
+
+  DmzSubnet0:
+    Description: Select an existing DMZ subnet for AZ 0.
+    Type: AWS::EC2::Subnet::Id
+
+Mappings:
+
+  RegionMap:
+    us-east-1:
+      AMI: ami-04bfee437f38a691e
+    us-east-2:
+      AMI: ami-0ed72083dbed1d548
+    us-west-1:
+      AMI: ami-035b67ea7b753ee7b
+    us-west-2:
+      AMI: ami-0385455dc2b1498ef
+
+Resources:
+
+  HostInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+      - !Ref IAMRole
+
+  HostInstance:
+    Type: AWS::EC2::Instance
+    Metadata:
+# Metadata (start)
+      AWS::CloudFormation::Init:
+        config: 
+          packages:
+            yum:
+              python3: []
+# Metadata (end)
+    Properties:
+      KeyName: !Ref KeyName
+      ImageId: !FindInMap [ RegionMap, !Ref 'AWS::Region', AMI ]
+      InstanceType: t2.micro
+      IamInstanceProfile: !Ref IAMRole
+      SecurityGroupIds:
+        - !Ref HostSecurityGroup
+      SubnetId: !Ref DmzSubnet0
+      UserData:
+        "Fn::Base64":
+          !Sub |
+            #!/bin/bash -xe
+            yum update -y
+            pyv="$(python --version 2>&1)"
+            # Do a test of python and make an if statement for python version < 3
+            if [[ $(echo "$pyv" | grep -i "^python 2") ]]; then
+              echo "Python 2 exists; install Python 3"
+              yum install python3 -y
+            fi
+            echo "Check whether Python 3 is installed"
+            pyfileloc="$(which python3 2>&1)"
+
+            if [[ $(echo "$pyfileloc" | grep -i "python3") ]]; then
+              echo "Python 3 exists"
+            else
+              echo "Python 3 does not exist; Exiting process..."
+              exit 1
+            fi
+            
+            su ec2-user << 'EOF'
+              echo "Installing Virtualenv"
+              pip3 install --user virtualenv
+              cd /home/ec2-user
+              mkdir venv
+              cd venv
+              pyfileloc=$(which python3 2>&1)
+              echo $pyfileloc
+              echo $PATH
+              echo "Add .local/bin to PATH"
+              export PATH="$PATH:/home/ec2-user/.local/bin"
+              virtualenv -p $pyfileloc python3
+              source python3/bin/activate
+              checkpy=$(which python3 2>&1)
+              echo "Verifying that python3 is used in virtualenv"
+              if [[ $(echo "$checkpy" | grep -i "python3$") ]]; then
+                echo "Python3 is running on virtualenv"
+              else
+                echo "Python3 is not running; Exiting ..."
+                exit 1
+              fi
+              echo "Installing boto3"
+              pip3 install boto3
+
+            EOF                        
+            ## Install based on https://aws.amazon.com/premiumsupport/knowledge-center/ec2-linux-python3-boto3/
+      Tags:
+        -
+          Key: Name
+          Value: ML-PY-Host
+
+Outputs:
+
+  publicIP:
+    Value: !GetAtt HostInstance.PublicIp
